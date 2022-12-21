@@ -1,31 +1,31 @@
-const https = require('https')
-const crypto = require('crypto')
+const https = require('https') // To make the resquest to HIBP
+const CryptoJS = require('crypto-js') // We need the crypto-js library to compute the SHA-1 hash
 
-module.exports = handleInput // export the handleInput function
+// module.exports = async handleInput;
 
 // Get the second element in the process.argv array (the first element is the path to Node.js, and the second element is the path to the script)
 const input = process.argv[2]
 const user_password = process.argv[3]
 
-// handleInput.js
-function handleInput(input) {
+async function handleInput(input) {
   if (input === '-h' || input === '--help') {
-    showHelp()
+    showHelp();
   } else if (input === '-v' || input === '--version') {
-    showVersion()
+    showVersion();
   } else if (input == '-hibp') {
     if (
       typeof user_password !== 'undefined' &&
       typeof user_password !== 'null'
     ) {
-      hibp(user_password)
-    } else {
-      console.log('The user input by PASSWORD is empty')
+      const result = await hibp(user_password);
+      console.log(result);
     }
   } else {
-    console.log('Invalid input. Use -h or --help for a list of options.')
+    console.log('Invalid input. Use -h or --help for a list of options.');
   }
 }
+
+
 
 function showHelp() {
   console.log('Available options:')
@@ -40,52 +40,44 @@ function showVersion() {
   console.log('Current version: 1.0.0')
 }
 
-//get the user input and turn it to sha1 (hash) and send to HIBP and get the output. Show user the output
-function hibp(user_password) {
-  //Hash the user user_password
-  let hashed_password = crypto
-    .createHash('sha1')
-    .update(user_password)
-    .digest('hex')
-    .toUpperCase()
-
-  //I only need the first 5 digits of the hash
-  let first_5_digits_hashed_password = hashed_password.slice(0, 5)
-  let api_call = `https://api.pwnedpasswords.com/range/${first_5_digits_hashed_password}`
-
-  let response_all_hashes = ''
-  // Yep.. This is another way to make functions :)
-  https
-    .get(api_call, function (res) {
-      res.setEncoding('utf8')
-      res.on('data', (chunk) => (response_all_hashes += chunk))
-      res.on('end', onEnd)
-    })
-    .on('error', function (err) {
-      console.log(`Error: ${err}`)
-    })
-
-  // It does't look good a function inside of another function. But I want to let the things readable here !!!
-  function onEnd() {
-    // Take a look on the line 53 onEnd
-    let res = response_all_hashes.split('\r\n').map((h) => {
-      let sp = h.split(':')
-      //Hash : Number
-      return {
-        hash: sp[0],
-        count: parseInt(sp[1]),
-      }
-    })
-    // console.log(res);
-    let found = res.find((h) => h.hash === hashed_password)
-    if (found) {
-      console.log(
-        `Your passwords has been found ${found.count} times. \n Thi is a vulnarable password!!!`
-      )
-    } else {
-      console.log(`Your password is safe.\n No matches found!!!`)
+// Get the user input and turn it to sha1 (hash) and send to HIBP and get the output. Show user the output
+function hibp(password) {
+  return new Promise((resolve, reject) => {
+    // We return a Promise to handle the async nature of the API request
+    const hash = CryptoJS.SHA1(password).toString() // We hash the password using the SHA-1 algorithm
+    const options = {
+      hostname: 'api.pwnedpasswords.com',
+      path: `/range/${hash.substring(0, 5)}`, // We only need the first 5 characters of the hash for the API request
+      headers: {
+        'User-Agent': 'MyApp/1.0.0', // We need to set a User-Agent header to make the request
+      },
     }
-  }
+
+    https
+      .get(options, (res) => {
+        let data = ''
+        res.on('data', (chunk) => {
+          data += chunk
+        }) // We append each chunk of data to a string
+        res.on('end', () => {
+          const lines = data.split('\n') // The API returns the hash suffixes and number of occurrences on separate lines
+          for (const line of lines) {
+            const [suffix, count] = line.split(':') // We split each line by the colon separator
+            if (hash.substring(5).toUpperCase() === suffix.toUpperCase()) {
+              // If the suffix matches the remaining characters of the hash, the password has been leaked
+              resolve(
+                'This password has been found ${count} times in data breaches.'
+              )
+              return
+            }
+          }
+          resolve('This password has not been found in any data breaches.') // If we didn't find a match, the password has not been leaked
+        })
+      })
+      .on('error', (e) => {
+        reject(e) // If there was an error making the request, we reject the Promise with the error
+      })
+  })
 }
 
 // Call the handleInput function with the user input
